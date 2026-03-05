@@ -8,26 +8,21 @@ Shared local development infrastructure for PHP/Laravel projects running under D
 localdev/
 ├── traefik/                  # Reverse proxy (HTTP/HTTPS, TLS, routing)
 ├── mysql-server/             # Shared MySQL 8 instance
+├── start-localdev            # Start all shared infrastructure
 └── generate-localdev-php     # Scaffold script for new projects
 ```
 
 ## Prerequisites
 
-- Docker with the `devnet` external network
-- Traefik and MySQL stacks running (see below)
-
-### Create the shared network (once)
-
-```bash
-docker network create devnet
-```
+- Docker
 
 ### Start shared infrastructure
 
 ```bash
-docker compose -f ~/Codes/localdev/traefik/compose.yml up -d
-docker compose -f ~/Codes/localdev/mysql-server/compose.yml up -d
+~/Codes/localdev/start-localdev
 ```
+
+The script creates the `devnet` network if missing, prompts for `MYSQL_ROOT_PASSWORD` the first time, then starts Traefik and MySQL.
 
 Traefik dashboard is available at `http://localhost:8080`.
 
