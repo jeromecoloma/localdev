@@ -1,0 +1,24 @@
+
+_assets
+_scripts
+
+# Secrets & credentials
+.env
+*.env
+
+# TLS private keys
+*.key
+*-key.pem
+
+# Generate public key
+/traefik/certs/test.pem
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.idea/
+.vscode/
+*.swp
+*~

@@ -1,0 +1,21 @@
+name: mysql-server
+
+services:
+  mysql:
+    image: mysql:8.0
+    command: --default-authentication-plugin=mysql_native_password
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    ports:
+      - "3306:3306"
+    networks:
+      - devnet
+
+volumes:
+  mysql_data:
+
+networks:
+  devnet:
+    external: true

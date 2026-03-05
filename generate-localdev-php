@@ -1,0 +1,283 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ── 1. Check for existing files ───────────────────────────────────────────────
+
+EXISTING=()
+[[ -f compose.yml ]] && EXISTING+=("compose.yml")
+[[ -d .localdev ]]   && EXISTING+=(".localdev/")
+
+if [[ ${#EXISTING[@]} -gt 0 ]]; then
+  echo "Warning: the following already exist in $(pwd):"
+  for f in "${EXISTING[@]}"; do echo "  $f"; done
+  read -r -p "Overwrite? [y/N] " CONFIRM
+  [[ "${CONFIRM,,}" == "y" ]] || { echo "Aborted."; exit 1; }
+fi
+
+# ── 2. Prompt: PROJECT_TYPE ───────────────────────────────────────────────────
+
+while true; do
+  read -r -p "Project type (laravel/php) [default: laravel]: " PROJECT_TYPE_INPUT
+  PROJECT_TYPE_INPUT="${PROJECT_TYPE_INPUT,,}"
+  case "$PROJECT_TYPE_INPUT" in
+    ""|l|laravel) PROJECT_TYPE="laravel"; break ;;
+    p|php)        PROJECT_TYPE="php";     break ;;
+    *) echo "  Error: enter 'laravel' (or 'l') / 'php' (or 'p')." ;;
+  esac
+done
+
+# ── 3. Prompt: PHP_VERSION ────────────────────────────────────────────────────
+
+echo "PHP version:"
+echo "  1) 7.4"
+echo "  2) 8.1"
+echo "  3) 8.4 (default)"
+while true; do
+  read -r -p "Choice [3]: " PHP_CHOICE
+  case "$PHP_CHOICE" in
+    ""|3|8.4) PHP_VERSION="8.4"; break ;;
+    1|7.4)    PHP_VERSION="7.4"; break ;;
+    2|8.1)    PHP_VERSION="8.1"; break ;;
+    *) echo "  Error: enter 1, 2, or 3 (or the version string)." ;;
+  esac
+done
+
+# ── 4. Prompt: WEB_ROOT (plain PHP only) ─────────────────────────────────────
+
+if [[ "$PROJECT_TYPE" == "php" ]]; then
+  read -r -p "Web root [default: public]: " WEB_ROOT_INPUT
+  WEB_ROOT="${WEB_ROOT_INPUT:-public}"
+else
+  WEB_ROOT="public"
+fi
+
+# Resolve NGINX_ROOT
+if [[ "$WEB_ROOT" == "." || -z "$WEB_ROOT" ]]; then
+  NGINX_ROOT="/var/www/html"
+else
+  NGINX_ROOT="/var/www/html/$WEB_ROOT"
+fi
+
+# ── 5. Prompt: APP_NAME ───────────────────────────────────────────────────────
+
+while true; do
+  read -r -p "App name (slug, e.g. myapp): " APP_NAME
+  if [[ -z "$APP_NAME" ]]; then
+    echo "  Error: app name cannot be empty."
+  elif [[ ! "$APP_NAME" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
+    echo "  Error: use lowercase letters, digits, and hyphens only (no leading hyphen)."
+  else
+    break
+  fi
+done
+
+# ── 6. Prompt: DOMAIN ─────────────────────────────────────────────────────────
+
+while true; do
+  read -r -p "Domain (e.g. myapp.com.test): " DOMAIN
+  if [[ -z "$DOMAIN" ]]; then
+    echo "  Error: domain cannot be empty."
+  else
+    break
+  fi
+done
+
+# ── Derived variables ─────────────────────────────────────────────────────────
+
+PHP_IMAGE="php:${PHP_VERSION}-fpm"
+
+if [[ "$PHP_VERSION" == "7.4" ]]; then
+  COMPOSER_IMG="composer:2.2"
+else
+  COMPOSER_IMG="composer:2"
+fi
+
+# ── 7. Create .localdev/ ──────────────────────────────────────────────────────
+
+mkdir -p .localdev
+
+# ── 8. compose.yml (root wrapper — static) ───────────────────────────────────
+
+cat > compose.yml << 'EOF'
+include:
+  - path: .localdev/compose.yml
+EOF
+
+# ── 9. .localdev/compose.yml (substituted) ───────────────────────────────────
+
+if [[ "$PROJECT_TYPE" == "laravel" ]]; then
+  cat > .localdev/compose.yml << EOF
+name: ${APP_NAME}
+
+services:
+  node:
+    image: node:22-alpine
+    working_dir: /app
+    volumes:
+      - ../www:/app
+    command: sh -c "npm install && npm run build"
+    restart: no
+
+  web:
+    image: nginx:1.27-alpine
+    volumes:
+      - ../www:/var/www/html:ro
+      - ../www/.env.local:/var/www/html/.env:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - devnet
+    depends_on:
+      node:
+        condition: service_completed_successfully
+    labels:
+      - traefik.enable=true
+
+      # HTTP
+      - traefik.http.routers.${APP_NAME}.rule=Host(\`${DOMAIN}\`)
+      - traefik.http.routers.${APP_NAME}.entrypoints=web
+      - traefik.http.routers.${APP_NAME}.service=${APP_NAME}
+
+      # HTTPS
+      - traefik.http.routers.${APP_NAME}s.rule=Host(\`${DOMAIN}\`)
+      - traefik.http.routers.${APP_NAME}s.entrypoints=websecure
+      - traefik.http.routers.${APP_NAME}s.tls=true
+      - traefik.http.routers.${APP_NAME}s.service=${APP_NAME}
+
+      # Container port
+      - traefik.http.services.${APP_NAME}.loadbalancer.server.port=80
+
+  ${APP_NAME}-php:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ../www:/var/www/html
+      - ../www/.env.local:/var/www/html/.env:ro
+    networks:
+      - devnet
+    depends_on:
+      node:
+        condition: service_completed_successfully
+
+networks:
+  devnet:
+    external: true
+EOF
+else
+  cat > .localdev/compose.yml << EOF
+name: ${APP_NAME}
+
+services:
+  web:
+    image: nginx:1.27-alpine
+    volumes:
+      - ../www:/var/www/html:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - devnet
+    labels:
+      - traefik.enable=true
+
+      # HTTP
+      - traefik.http.routers.${APP_NAME}.rule=Host(\`${DOMAIN}\`)
+      - traefik.http.routers.${APP_NAME}.entrypoints=web
+      - traefik.http.routers.${APP_NAME}.service=${APP_NAME}
+
+      # HTTPS
+      - traefik.http.routers.${APP_NAME}s.rule=Host(\`${DOMAIN}\`)
+      - traefik.http.routers.${APP_NAME}s.entrypoints=websecure
+      - traefik.http.routers.${APP_NAME}s.tls=true
+      - traefik.http.routers.${APP_NAME}s.service=${APP_NAME}
+
+      # Container port
+      - traefik.http.services.${APP_NAME}.loadbalancer.server.port=80
+
+  ${APP_NAME}-php:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ../www:/var/www/html
+    networks:
+      - devnet
+
+networks:
+  devnet:
+    external: true
+EOF
+fi
+
+# ── 10. .localdev/Dockerfile ──────────────────────────────────────────────────
+
+if [[ "$PROJECT_TYPE" == "laravel" ]]; then
+  cat > .localdev/Dockerfile << EOF
+FROM ${PHP_IMAGE}
+
+RUN apt-get update && apt-get install -y \\
+    git unzip libzip-dev libpng-dev libonig-dev libxml2-dev \\
+  && docker-php-ext-install pdo_mysql mbstring zip exif pcntl sockets \\
+  && rm -rf /var/lib/apt/lists/*
+
+COPY --from=${COMPOSER_IMG} /usr/bin/composer /usr/bin/composer
+
+WORKDIR /var/www/html
+
+CMD ["sh", "-c", "composer install --no-interaction --prefer-dist --optimize-autoloader && [ ! -f database/database.sqlite ] && touch database/database.sqlite; chown -R www-data:www-data storage bootstrap/cache database && chmod -R 775 storage bootstrap/cache && chmod 664 database/database.sqlite && php artisan migrate --force && php-fpm"]
+EOF
+else
+  cat > .localdev/Dockerfile << EOF
+FROM ${PHP_IMAGE}
+
+RUN apt-get update && apt-get install -y \\
+    git unzip libzip-dev libpng-dev libonig-dev libxml2-dev \\
+  && docker-php-ext-install pdo_mysql mbstring zip exif pcntl sockets \\
+  && rm -rf /var/lib/apt/lists/*
+
+COPY --from=${COMPOSER_IMG} /usr/bin/composer /usr/bin/composer
+
+WORKDIR /var/www/html
+
+CMD ["php-fpm"]
+EOF
+fi
+
+# ── 11. .localdev/nginx.conf (substituted) ────────────────────────────────────
+
+cat > .localdev/nginx.conf << EOF
+server {
+  listen 80;
+  server_name _;
+  root ${NGINX_ROOT};
+  index index.php index.html;
+
+  resolver 127.0.0.11 valid=5s;
+
+  add_header X-Site "${APP_NAME}" always;
+
+  location / {
+    try_files \$uri \$uri/ /index.php?\$query_string;
+  }
+
+  location ~ \.php\$ {
+    set \$upstream ${APP_NAME}-php:9000;
+    include fastcgi_params;
+    fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
+    fastcgi_param HTTPS on;
+    fastcgi_pass \$upstream;
+  }
+}
+EOF
+
+# ── 12. Success summary ────────────────────────────────────────────────────────
+
+echo ""
+echo "✓ compose.yml"
+echo "✓ .localdev/compose.yml"
+echo "✓ .localdev/Dockerfile"
+echo "✓ .localdev/nginx.conf"
+echo ""
+echo "Next:"
+if [[ "$PROJECT_TYPE" == "laravel" ]]; then
+  echo "  cp www/.env.example www/.env.local   # configure your env"
+fi
+echo "  docker compose up -d                 # start the stack"

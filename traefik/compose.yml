@@ -1,0 +1,34 @@
+name: traefik
+
+services:
+  traefik:
+    image: traefik:v3
+    command:
+      - --api.dashboard=true
+      - --api.insecure=true
+
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+
+      - --providers.file.directory=/etc/traefik/dynamic
+      - --providers.file.watch=true
+
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --entrypoints.websecure.http.tls=true
+      - --entrypoints.websecure.http2.maxConcurrentStreams=0
+
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./dynamic:/etc/traefik/dynamic:ro
+      - ./certs:/certs:ro
+    networks:
+      - devnet
+
+networks:
+  devnet:
+    external: true
