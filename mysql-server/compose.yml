@@ -5,6 +5,7 @@ services:
     image: mysql:8.0
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+    restart: unless-stopped
     volumes:
       - mysql_data:/var/lib/mysql
     ports:

@@ -18,6 +18,7 @@ services:
       - --entrypoints.websecure.http.tls=true
       - --entrypoints.websecure.http2.maxConcurrentStreams=0
 
+    restart: unless-stopped
     ports:
       - "80:80"
       - "443:443"

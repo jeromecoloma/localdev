@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# ── 1. Ensure devnet network exists ───────────────────────────────────────────
+
+echo "Checking devnet network..."
+if ! docker network ls --format '{{.Name}}' | grep -q '^devnet$'; then
+  echo "  Creating devnet network..."
+  docker network create devnet
+else
+  echo "  devnet already exists."
+fi
+
+# ── 2. Ensure mysql-server/.env exists ────────────────────────────────────────
+
+ENV_FILE="$SCRIPT_DIR/mysql-server/.env"
+
+if [[ ! -f "$ENV_FILE" ]]; then
+  echo ""
+  echo "mysql-server/.env not found."
+  while true; do
+    read -r -s -p "Enter MYSQL_ROOT_PASSWORD: " MYSQL_ROOT_PASSWORD
+    echo ""
+    if [[ -z "$MYSQL_ROOT_PASSWORD" ]]; then
+      echo "  Error: password cannot be empty."
+    else
+      break
+    fi
+  done
+  echo "MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}" > "$ENV_FILE"
+  echo "  Created mysql-server/.env"
+else
+  echo "mysql-server/.env already exists."
+fi
+
+# ── 3. Start traefik ──────────────────────────────────────────────────────────
+
+echo ""
+echo "Starting traefik..."
+docker compose -f "$SCRIPT_DIR/traefik/compose.yml" up -d
+
+# ── 4. Start mysql-server ─────────────────────────────────────────────────────
+
+echo ""
+echo "Starting mysql-server..."
+docker compose -f "$SCRIPT_DIR/mysql-server/compose.yml" up -d
+
+# ── 5. Success summary ────────────────────────────────────────────────────────
+
+echo ""
+echo "✓ devnet network"
+echo "✓ traefik"
+echo "✓ mysql-server"
+echo ""
+echo "Traefik dashboard: http://localhost:8080"
+echo ""
+echo "Next:"
+echo "  cd <project>  && docker compose up -d   # start a project stack"
